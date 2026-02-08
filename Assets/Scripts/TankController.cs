@@ -3,65 +3,109 @@ using UnityEngine;
 public class TankController : MonoBehaviour
 {
 
-    [SerializeField]
-    private float moveSpeed = 5.0f;    // 탱크 움직이는 속도
-    [SerializeField]
-    private float rotateSpeed = 100.0f;    // 탱크 회전속도
-    [SerializeField]
-    private float mouseSensitivity = 1.5f;    // 포탑 회전 속도
-    [SerializeField]
-    private float smoothSpeed = 5.0f;    // 포탑 회전 부드러움
+    [SerializeField] private float moveSpeed = 5.0f;
+    [SerializeField] private float rotateSpeed = 100.0f;
 
-    [SerializeField]
-    private GameObject tankTower;
-    [SerializeField]
-    private GameObject tankGun;
-    [SerializeField]
-    private GameObject cameraPivot;
+    [SerializeField] private float turretSpeed = 150.0f;
+    [SerializeField] private float gunSpeed = 100.0f;
+    [SerializeField] private float maxGunAngle = 20.0f;
+    [SerializeField] private float minGunAngle = -9.0f;
+    [SerializeField] private bool reverseGunAngle = false; // 포신 반전 여부
 
-    private float currentGunAngle = 0f;
+    [SerializeField] private GameObject tankTower;
+    [SerializeField] private GameObject tankGun;
+    [SerializeField] private GameObject cameraPivot;
+    [SerializeField] private Camera mainCamera;
+    [SerializeField] private LayerMask aimLayerMask;
+
+    private float camX, camY;
+
+    void Start()
+    {
+        Cursor.lockState = CursorLockMode.Locked;
+        Cursor.visible = false;
+
+        if (mainCamera == null) mainCamera = Camera.main;
+
+        // 초기 카메라 각도
+        if (cameraPivot != null)
+        {
+            Vector3 rot = cameraPivot.transform.localRotation.eulerAngles;
+            camX = rot.y;
+            camY = rot.x;
+        }
+    }
 
     void Update()
     {
-        TankMove(); // 탱크 움직임
+        HandleMove();   // 이동
+        HandleCamera(); // 카메라
+        HandleAim();    // 조준
     }
 
-    private void TankMove()
+    // 탱크 이동 (WASD)
+    private void HandleMove()
     {
-        // 탱크 방향키 입력
-        float moveInput = Input.GetAxis("Vertical");
-        float rotateInput = Input.GetAxis("Horizontal");
-        
-        // 탱크 움직임 계산
-        float move = moveInput * moveSpeed * Time.deltaTime;
-        float rotate = rotateInput * rotateSpeed * Time.deltaTime;
+        float v = Input.GetAxis("Vertical") * moveSpeed * Time.deltaTime;
+        float h = Input.GetAxis("Horizontal") * rotateSpeed * Time.deltaTime;
 
-        transform.Translate(0, 0, move);
-        transform.Rotate(0, rotate, 0);
+        transform.Translate(0, 0, v);
+        transform.Rotate(0, h, 0);
+    }
 
-        // 포탑 좌우 회전
-        if (tankTower != null)
+    // 카메라 회전 (마우스)
+    private void HandleCamera()
+    {
+        if (!cameraPivot) return;
+
+        camX += Input.GetAxis("Mouse X") * 2.0f;
+        camY -= Input.GetAxis("Mouse Y") * 2.0f;
+        camY = Mathf.Clamp(camY, -40f, 60f); // 상하 각도 제한
+
+        cameraPivot.transform.localRotation = Quaternion.Euler(camY, camX, 0);
+    }
+
+    // 조준 (포탑 & 포신)
+    private void HandleAim()
+    {
+        if (!mainCamera) return;
+
+        // 화면 중앙 레이캐스트
+        Ray ray = mainCamera.ViewportPointToRay(Vector3.one * 0.5f);
+        Vector3 target = Physics.Raycast(ray, out RaycastHit hit, 1000f, aimLayerMask)
+                         ? hit.point
+                         : ray.GetPoint(1000f);
+
+        // 포탑 좌우 회전 (Y축)
+        if (tankTower)
         {
-            float mouseX = Input.GetAxis("Mouse X") * mouseSensitivity * Time.deltaTime;
-            tankTower.transform.Rotate(0, mouseX, 0);
+            Vector3 dir = target - tankTower.transform.position;
+            dir.y = 0; // 높이 무시
+
+            if (dir != Vector3.zero)
+            {
+                Quaternion rot = Quaternion.LookRotation(dir);
+                tankTower.transform.rotation = Quaternion.RotateTowards(
+                    tankTower.transform.rotation, rot, turretSpeed * Time.deltaTime);
+            }
         }
 
-        // 포신 위아래 회전
-        if (tankGun != null)
+        // 포신 상하 회전
+        if (tankGun)
         {
-            float mouseY = Input.GetAxis("Mouse Y") * mouseSensitivity * Time.deltaTime;
+            Vector3 dir = target - tankGun.transform.position;
+            Vector3 localDir = tankTower.transform.InverseTransformDirection(dir); 
 
-            currentGunAngle += mouseY;
+            float angle = Mathf.Atan2(localDir.y, localDir.z) * Mathf.Rad2Deg;
 
-            // 앙각 +20도, 부각 -9도
-            currentGunAngle = Mathf.Clamp(currentGunAngle, -9f, 20f);
+            angle = reverseGunAngle ? angle : -angle;
 
-            tankGun.transform.localRotation = Quaternion.Euler(-currentGunAngle, 0, 0);
+            // 각도 제한
+            angle = Mathf.Clamp(angle, minGunAngle, maxGunAngle);
+            Quaternion rot = Quaternion.Euler(angle, 0, 0);
 
-            if(cameraPivot != null)
-            {
-                cameraPivot.transform.localRotation = Quaternion.Euler(-currentGunAngle, 0, 0);
-            }
+            tankGun.transform.localRotation = Quaternion.RotateTowards(
+                tankGun.transform.localRotation, rot, gunSpeed * Time.deltaTime);
         }
     }
 }

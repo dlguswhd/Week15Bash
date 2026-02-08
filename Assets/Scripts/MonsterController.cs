@@ -3,153 +3,88 @@ using UnityEngine.AI;
 
 public class MonsterController : MonoBehaviour
 {
-    [SerializeField] 
-    private float maxHp = 100f; //몬스터 스탯
+    [SerializeField] private float maxHp = 100f;
+    [SerializeField] private float walkSpeed = 2.0f;
+    [SerializeField] private float runSpeed = 6.0f;
 
-    [SerializeField] 
-    private float walkSpeed = 2.0f; // 순찰(Patrol) 상태일 때의 이동 속도
+    [SerializeField] private float detectRange = 10f;
+    [SerializeField] private float attackRange = 2.0f;
+    [SerializeField] private float attackCooldown = 1.5f;
 
-    [SerializeField] 
-    private float runSpeed = 6.0f; // 추적(Chase) 상태일 때의 이동 속도
-
-    [SerializeField]
-    private float rotationSmoothness = 10f; // 회전
-
-    [SerializeField]
-    private float detectRange = 10f; // 감지 및 공격 범위
-
-    [SerializeField] 
-    private float attackRange = 2.0f; // 공격 범위
-
-    [SerializeField] 
-    private float attackCooldown = 1.5f; // 공격 쿨타임
-
-    [SerializeField] 
-    private Transform player;
-
+    [SerializeField] private Transform player;
 
     private Animator anim;
     private NavMeshAgent agent;
-    private Collider playerCollider; 
-
-    // 상태 확인용
     private float currentHp;
-    private bool isDead = false;
-    private float lastAttackTime = 0f;
-
-    // 순찰 관련
-    private Vector3 patrolDestination;
+    private float lastAttackTime;
+    private bool isDead;
     private float patrolTimer;
-    private float patrolWaitTime = 2f; // 목적지 도착 후 대기 시간
 
     void Start()
     {
-        // 컴포넌트 가져오기
         anim = GetComponent<Animator>();
         agent = GetComponent<NavMeshAgent>();
-
-        // 초기화
         currentHp = maxHp;
-        InitializePlayerReference(); // 플레이어 콜라이더 찾기
-        SetNewPatrolDestination();   // 첫 순찰 지점 설정
+        SetPatrolPoint(); // 첫 순찰지점 설정
     }
 
     void Update()
     {
-        // 죽었거나 플레이어가 없으면 AI 정지
+        Detect();
+    }
+
+    private void Detect()
+    {
         if (isDead || player == null) return;
 
-        UpdateAIBehavior();
+        float dist = Vector3.Distance(transform.position, player.position);
+
+        if (dist <= attackRange) Attack();      // 공격 범위
+        else if (dist <= detectRange) Chase();  // 감지 범위
+        else Patrol();
     }
 
-    private void UpdateAIBehavior()
-    {
-        // 목표 지점 계산
-        Vector3 targetPoint = GetTargetPosition();
-
-        //  계산
-        float distanceToTarget = Vector3.Distance(transform.position, targetPoint);
-
-        // 거리별 행동 결정
-        if (distanceToTarget <= attackRange)
-        {
-            // 공격 범위 내: 멈춰서 공격
-            PerformAttack(targetPoint);
-        }
-        else if (distanceToTarget <= detectRange)
-        {
-            // 감지 범위 내: 뛰어서 추적
-            ChasePlayer(targetPoint);
-        }
-        else
-        {
-            // 감지 범위 밖: 평화롭게 순찰
-            Patrol();
-        }
-    }
-
-    // 플레이어의 콜라이더 유무에 따라 정확한 타격 위치 반환
-    private Vector3 GetTargetPosition()
-    {
-        if (playerCollider != null)
-        {
-            return playerCollider.ClosestPoint(transform.position);
-        }
-        return player.position; // 콜라이더가 없으면 중심점 반환
-    }
-
-    // 시작 시 플레이어의 콜라이더를 찾기
-    private void InitializePlayerReference()
-    {
-        if (player != null)
-        {
-            playerCollider = player.GetComponent<Collider>();
-        }
-    }
-
-
-    // 순찰: 랜덤한 위치로 천천히 걸어다님
+    // 순찰(Patrol)
     private void Patrol()
     {
         agent.isStopped = false;
         agent.speed = walkSpeed;
-        anim.SetFloat("Speed", 0.5f); // 걷기 애니메이션
+        anim.SetFloat("Speed", 0.5f);
 
-        // 목적지에 거의 도착했는지 확인
+        // 목적지 도착 체크
         if (agent.remainingDistance <= agent.stoppingDistance)
         {
+            anim.SetFloat("Speed", 0f); // 대기
             patrolTimer += Time.deltaTime;
-            anim.SetFloat("Speed", 0f); // 도착했으므로 잠시 대기
 
-            // 대기 시간이 지나면 새로운 목적지로 출발
-            if (patrolTimer >= patrolWaitTime)
+            if (patrolTimer >= 2.0f) // 2초 대기 후 이동
             {
-                SetNewPatrolDestination();
+                SetPatrolPoint();
                 patrolTimer = 0f;
             }
         }
     }
 
-    // 추적: 플레이어를 발견하고 뛰어감
-    private void ChasePlayer(Vector3 targetPoint)
+    // 추적(Chase)
+    private void Chase()
     {
         agent.isStopped = false;
         agent.speed = runSpeed;
-
-        agent.SetDestination(targetPoint); // 탱크 표면을 향해 이동
-        anim.SetFloat("Speed", 1.0f);      // 뛰기 애니메이션
+        agent.SetDestination(player.position);
+        anim.SetFloat("Speed", 1.0f);
     }
 
-    // 공격: 제자리에 멈춰서 플레이어를 바라보고 공격
-    private void PerformAttack(Vector3 targetPoint)
+    // 공격(Attack)
+    private void Attack()
     {
         agent.isStopped = true;
-        anim.SetFloat("Speed", 0f); // 정지
+        anim.SetFloat("Speed", 0f);
 
-        // 공격 중에도 어색하지 않게 대상을 바라봄
-        RotateTowards(targetPoint);
+        // 플레이어 바라보기 (Y축만 회전)
+        Vector3 dir = player.position - transform.position;
+        dir.y = 0;
+        transform.rotation = Quaternion.Slerp(transform.rotation, Quaternion.LookRotation(dir), 10f * Time.deltaTime);
 
-        // 쿨타임
         if (Time.time - lastAttackTime >= attackCooldown)
         {
             anim.SetTrigger("Attack");
@@ -157,63 +92,38 @@ public class MonsterController : MonoBehaviour
         }
     }
 
-    // 다음 순찰 지점을 랜덤하게 설정
-    private void SetNewPatrolDestination()
-    {
-        // 현재 위치 기준 반경 10m 내의 랜덤 좌표 생성
-        Vector3 randomDirection = Random.insideUnitSphere * 10f;
-        randomDirection += transform.position;
-
-        NavMeshHit hit;
-        if (NavMesh.SamplePosition(randomDirection, out hit, 10f, 1))
-        {
-            patrolDestination = hit.position;
-            agent.SetDestination(patrolDestination);
-        }
-    }
-
-    // 타겟 방향으로 회전
-    private void RotateTowards(Vector3 targetPosition)
-    {
-        Vector3 direction = (targetPosition - transform.position).normalized;
-        direction.y = 0; // 위아래 기울임 방지 (수평 회전만)
-
-        if (direction != Vector3.zero)
-        {
-            Quaternion lookRotation = Quaternion.LookRotation(direction);
-            transform.rotation = Quaternion.Slerp(transform.rotation, lookRotation, Time.deltaTime * rotationSmoothness);
-        }
-    }
-
-    // 피격
+    // 피격 및 사망
     public void TakeDamage(float damage)
     {
         if (isDead) return;
 
         currentHp -= damage;
-
-        if (currentHp <= 0)
-        {
-            Die();
-        }
-        else
-        {
-            anim.SetTrigger("Hit");
-        }
+        if (currentHp <= 0) Die();
+        else anim.SetTrigger("Hit");
     }
 
-    // 사망 처리
     private void Die()
     {
         isDead = true;
-        agent.isStopped = true;     // 이동 정지
-        anim.SetBool("Die", true);  // 사망 애니메이션
 
-        // 시체가 길을 막지 않도록 콜라이더 비활성화
-        Collider col = GetComponent<Collider>();
-        if (col != null) col.enabled = false;
+        // [핵심] 죽을 때 물리/이동 완전히 끄기
+        agent.enabled = false;      // 네비메쉬 끄기
+        anim.SetFloat("Speed", 0f); // 달리기 모션 강제 종료
 
-        // 3초 뒤 오브젝트 삭제
-        Destroy(gameObject, 3f);
+        anim.SetBool("Die", true);
+        anim.SetTrigger("Die");
+
+        GetComponent<Collider>().enabled = false; // 시체 충돌 무시
+        Destroy(gameObject, 3.0f);
+    }
+
+    // 랜덤 순찰지점 생성
+    private void SetPatrolPoint()
+    {
+        Vector3 randomPos = Random.insideUnitSphere * 10f + transform.position;
+        if (NavMesh.SamplePosition(randomPos, out NavMeshHit hit, 10f, NavMesh.AllAreas))
+        {
+            agent.SetDestination(hit.position);
+        }
     }
 }
